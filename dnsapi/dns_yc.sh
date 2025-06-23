@@ -103,7 +103,7 @@ dns_yc_add() {
   _debug _domain "$_domain"
 
   _info "Adding record"
-  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"merges\": [ { \"name\":\"$_sub_domain$_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$txtvalue\"]}]}"; then
+  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"merges\": [ { \"name\":\"$_sub_domain.$_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$txtvalue\"]}]}"; then
     if _contains "$response" "\"done\": true"; then
       _info "Added, OK"
       return 0
@@ -148,7 +148,7 @@ dns_yc_rm() {
   _debug _domain "$_domain"
 
   _debug "Getting txt records"
-  if _yc_rest GET "zones/${_domain_id}:getRecordSet?type=TXT&name=$_sub_domain$_domain"; then
+  if _yc_rest GET "zones/${_domain_id}:getRecordSet?type=TXT&name=$_sub_domain.$_domain"; then
     exists_txtvalue=$(echo "$response" | _normalizeJson | sed -n "s/.*\"data\":\[\([^]]*\)\].*/\1/p" | tr -d '\"' | tr ',' '\n' | _head_n 1)
     _debug exists_txtvalue "$exists_txtvalue"
   else
@@ -156,7 +156,7 @@ dns_yc_rm() {
     return 1
   fi
 
-  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"deletions\": [ { \"name\":\"$_sub_domain$_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$exists_txtvalue\"]}]}"; then
+  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"deletions\": [ { \"name\":\"$_sub_domain.$_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$exists_txtvalue\"]}]}"; then
     if _contains "$response" "\"done\": true"; then
       _info "Delete, OK"
       return 0
