@@ -4,16 +4,16 @@ dns_yc_info='Yandex Cloud DNS
 Site: Cloud.Yandex.com
 Docs: github.com/acmesh-official/acme.sh/wiki/dnsapi2#dns_yc
 Options:
- YC_Zone_ID DNS Zone ID
  YC_Folder_ID YC Folder ID
  YC_SA_ID Service Account ID
  YC_SA_Key_ID Service Account IAM Key ID
+ YC_Zone_ID DNS Zone ID. Optional.
+ YC_Api Api URL. Optional. Default is https://dns.api.cloud.yandex.net/dns/v1.
+ YC_IAM_Api IAM Api URL. Optional. Default is https://iam.api.cloud.yandex.net/iam/v1/tokens.
  YC_SA_Key_File_Path Private key file path. Optional.
  YC_SA_Key_File_PEM_b64 Base64 content of private key file. Use instead of Path to private key file. Optional.
 Issues: github.com/acmesh-official/acme.sh/issues/4210
 '
-
-YC_Api="https://dns.api.cloud.yandex.net/dns/v1"
 
 ########  Public functions #####################
 
@@ -22,22 +22,39 @@ dns_yc_add() {
   fulldomain="$(echo "$1". | _lower_case)" # Add dot at end of domain name
   txtvalue=$2
 
+  YC_Api="${YC_Api:-$(_readaccountconf_mutable YC_Api)}"
+  YC_IAM_Api="${YC_IAM_Api:-$(_readaccountconf_mutable YC_IAM_Api)}"
+
+  if [ "$YC_Api" ]; then
+    _saveaccountconf_mutable YC_Api "$YC_Api"
+  else
+    YC_Api="https://dns.api.cloud.yandex.net/dns/v1"
+    _saveaccountconf_mutable YC_Api "$YC_Api"
+  fi
+
+  if [ "$YC_IAM_Api" ]; then
+    _saveaccountconf_mutable YC_IAM_Api "$YC_IAM_Api"
+  else
+    YC_IAM_Api="https://iam.api.cloud.yandex.net/iam/v1/tokens"
+    _saveaccountconf_mutable YC_IAM_Api "$YC_IAM_Api"
+  fi
+
   YC_SA_Key_File_PEM_b64="${YC_SA_Key_File_PEM_b64:-$(_readaccountconf_mutable YC_SA_Key_File_PEM_b64)}"
   YC_SA_Key_File_Path="${YC_SA_Key_File_Path:-$(_readaccountconf_mutable YC_SA_Key_File_Path)}"
 
   if [ "$YC_SA_Key_File_PEM_b64" ]; then
     echo "$YC_SA_Key_File_PEM_b64" | _dbase64 >private.key
     YC_SA_Key_File="private.key"
-    _savedomainconf YC_SA_Key_File_PEM_b64 "$YC_SA_Key_File_PEM_b64"
+    _saveaccountconf_mutable YC_SA_Key_File_PEM_b64 "$YC_SA_Key_File_PEM_b64"
   else
     YC_SA_Key_File="$YC_SA_Key_File_Path"
-    _savedomainconf YC_SA_Key_File_Path "$YC_SA_Key_File_Path"
+    _saveaccountconf_mutable YC_SA_Key_File_Path "$YC_SA_Key_File_Path"
   fi
 
-  YC_Zone_ID="${YC_Zone_ID:-$(_readaccountconf_mutable YC_Zone_ID)}"
-  YC_Folder_ID="${YC_Folder_ID:-$(_readaccountconf_mutable YC_Folder_ID)}"
-  YC_SA_ID="${YC_SA_ID:-$(_readaccountconf_mutable YC_SA_ID)}"
-  YC_SA_Key_ID="${YC_SA_Key_ID:-$(_readaccountconf_mutable YC_SA_Key_ID)}"
+  YC_Zone_ID="${YC_Zone_ID:-$(_readdomainconf YC_Zone_ID)}"
+  YC_Folder_ID="${YC_Folder_ID:-$(_readdomainconf YC_Folder_ID)}"
+  YC_SA_ID="${YC_SA_ID:-$(_readdomainconf YC_SA_ID)}"
+  YC_SA_Key_ID="${YC_SA_Key_ID:-$(_readdomainconf YC_SA_Key_ID)}"
 
   if [ "$YC_SA_ID" ] && [ "$YC_SA_Key_ID" ] && [ "$YC_SA_Key_File" ]; then
     if [ -f "$YC_SA_Key_File" ]; then
@@ -48,9 +65,8 @@ dns_yc_add() {
           _savedomainconf YC_SA_Key_ID "$YC_SA_Key_ID"
         elif [ "$YC_Folder_ID" ]; then
           _savedomainconf YC_Folder_ID "$YC_Folder_ID"
-          _saveaccountconf_mutable YC_SA_ID "$YC_SA_ID"
-          _saveaccountconf_mutable YC_SA_Key_ID "$YC_SA_Key_ID"
-          _clearaccountconf_mutable YC_Zone_ID
+          _savedomainconf YC_SA_ID "$YC_SA_ID"
+          _savedomainconf YC_SA_Key_ID "$YC_SA_Key_ID"
           _clearaccountconf YC_Zone_ID
         else
           _err "You didn't specify a Yandex Cloud Zone ID or Folder ID yet."
@@ -69,8 +85,10 @@ dns_yc_add() {
     _clearaccountconf YC_Folder_ID
     _clearaccountconf YC_SA_ID
     _clearaccountconf YC_SA_Key_ID
-    _clearaccountconf YC_SA_Key_File_PEM_b64
-    _clearaccountconf YC_SA_Key_File_Path
+    _clearaccountconf_mutable YC_SA_Key_File_PEM_b64
+    _clearaccountconf_mutable YC_SA_Key_File_Path
+    _clearaccountconf_mutable YC_Api
+    _clearaccountconf_mutable YC_IAM_Api
     _err "You didn't specify a YC_SA_ID or YC_SA_Key_ID or YC_SA_Key_File."
     return 1
   fi
@@ -84,14 +102,8 @@ dns_yc_add() {
   _debug _sub_domain "$_sub_domain"
   _debug _domain "$_domain"
 
-  _debug "Getting txt records"
-  if ! _yc_rest GET "zones/${_domain_id}:getRecordSet?type=TXT&name=$_sub_domain"; then
-    _err "Error: $response"
-    return 1
-  fi
-
   _info "Adding record"
-  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"merges\": [ { \"name\":\"$_sub_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$txtvalue\"]}]}"; then
+  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"merges\": [ { \"name\":\"$_sub_domain$_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$txtvalue\"]}]}"; then
     if _contains "$response" "\"done\": true"; then
       _info "Added, OK"
       return 0
@@ -110,14 +122,25 @@ dns_yc_rm() {
   fulldomain="$(echo "$1". | _lower_case)" # Add dot at end of domain name
   txtvalue=$2
 
-  YC_Zone_ID="${YC_Zone_ID:-$(_readaccountconf_mutable YC_Zone_ID)}"
-  YC_Folder_ID="${YC_Folder_ID:-$(_readaccountconf_mutable YC_Folder_ID)}"
-  YC_SA_ID="${YC_SA_ID:-$(_readaccountconf_mutable YC_SA_ID)}"
-  YC_SA_Key_ID="${YC_SA_Key_ID:-$(_readaccountconf_mutable YC_SA_Key_ID)}"
+  YC_Api="${YC_Api:-$(_readaccountconf_mutable YC_Api)}"
+  YC_IAM_Api="${YC_IAM_Api:-$(_readaccountconf_mutable YC_IAM_Api)}"
+  YC_SA_Key_File_PEM_b64="${YC_SA_Key_File_PEM_b64:-$(_readaccountconf_mutable YC_SA_Key_File_PEM_b64)}"
+  YC_SA_Key_File_Path="${YC_SA_Key_File_Path:-$(_readaccountconf_mutable YC_SA_Key_File_Path)}"
+  YC_Zone_ID="${YC_Zone_ID:-$(_readdomainconf YC_Zone_ID)}"
+  YC_Folder_ID="${YC_Folder_ID:-$(_readdomainconf YC_Folder_ID)}"
+  YC_SA_ID="${YC_SA_ID:-$(_readdomainconf YC_SA_ID)}"
+  YC_SA_Key_ID="${YC_SA_Key_ID:-$(_readdomainconf YC_SA_Key_ID)}"
+
+  if [ "$YC_SA_Key_File_PEM_b64" ]; then
+    echo "$YC_SA_Key_File_PEM_b64" | _dbase64 >private.key
+    YC_SA_Key_File="private.key"
+  else
+    YC_SA_Key_File="$YC_SA_Key_File_Path"
+  fi
 
   _debug "First detect the root zone"
   if ! _get_root "$fulldomain"; then
-    _err "invalid domain"
+    _err "invalid domain: $fulldomain"
     return 1
   fi
   _debug _domain_id "$_domain_id"
@@ -125,15 +148,15 @@ dns_yc_rm() {
   _debug _domain "$_domain"
 
   _debug "Getting txt records"
-  if _yc_rest GET "zones/${_domain_id}:getRecordSet?type=TXT&name=$_sub_domain"; then
-    exists_txtvalue=$(echo "$response" | _normalizeJson | _egrep_o "\"data\".*\][^,]*" | _egrep_o "[^:]*$")
+  if _yc_rest GET "zones/${_domain_id}:getRecordSet?type=TXT&name=$_sub_domain$_domain"; then
+    exists_txtvalue=$(echo "$response" | _normalizeJson | sed -n "s/.*\"data\":\[\([^]]*\)\].*/\1/p" | tr -d '\"' | tr ',' '\n' | _head_n 1)
     _debug exists_txtvalue "$exists_txtvalue"
   else
     _err "Error: $response"
     return 1
   fi
 
-  if _yc_rest POST "zones/$_domain_id:updateRecordSets" "{\"deletions\": [ { \"name\":\"$_sub_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":$exists_txtvalue}]}"; then
+  if _yc_rest POST "zones/$_domain_id:upsertRecordSets" "{\"deletions\": [ { \"name\":\"$_sub_domain$_domain\",\"type\":\"TXT\",\"ttl\":\"120\",\"data\":[\"$exists_txtvalue\"]}]}"; then
     if _contains "$response" "\"done\": true"; then
       _info "Delete, OK"
       return 0
@@ -166,7 +189,7 @@ _get_root() {
         _domain=$(echo "$response" | _egrep_o "\"zone\": *\"[^\"]*\"" | cut -d : -f 2 | tr -d \" | _head_n 1 | tr -d " ")
         if [ "$_domain" ]; then
           _cutlength=$((${#domain} - ${#_domain}))
-          _sub_domain=$(printf "%s" "$domain" | cut -c "1-$_cutlength")
+          _sub_domain=$(printf "%s" "$domain" | cut -c 1-"$_cutlength")
           _domain_id=$YC_Zone_ID
           return 0
         else
@@ -213,19 +236,17 @@ _yc_rest() {
   m=$1
   ep="$2"
   data="$3"
-  _debug "$ep"
+  _debug ep "$ep"
 
   if [ ! "$YC_Token" ]; then
-    _debug "Login"
+    _debug "Login in YC"
     _yc_login
   else
     _debug "Token already exists. Skip Login."
   fi
 
-  token_trimmed=$(echo "$YC_Token" | tr -d '"')
-
   export _H1="Content-Type: application/json"
-  export _H2="Authorization: Bearer $token_trimmed"
+  export _H2="Authorization: Bearer $YC_Token"
 
   if [ "$m" != "GET" ]; then
     _debug data "$data"
@@ -248,24 +269,22 @@ _yc_login() {
 
   _current_timestamp=$(_time)
   _expire_timestamp=$(_math "$_current_timestamp" + 1200) # 20 minutes
-  payload=$(echo "{\"iss\":\"$YC_SA_ID\",\"aud\":\"https://iam.api.cloud.yandex.net/iam/v1/tokens\",\"iat\":$_current_timestamp,\"exp\":$_expire_timestamp}" | _normalizeJson | _base64 | _url_replace)
+  payload=$(echo "{\"iss\":\"$YC_SA_ID\",\"aud\":\"$YC_IAM_Api\",\"iat\":$_current_timestamp,\"exp\":$_expire_timestamp}" | _normalizeJson | _base64 | _url_replace)
   _debug payload "$payload"
 
   #signature=$(printf "%s.%s" "$header" "$payload" | ${ACME_OPENSSL_BIN:-openssl} dgst -sign "$YC_SA_Key_File -sha256 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1" | _base64 | _url_replace )
-  _signature=$(printf "%s.%s" "$header" "$payload" | _sign "$YC_SA_Key_File" "sha256 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1" | _url_replace)
+  _signature=$(printf "%s.%s" "$header" "$payload" | _sign "$YC_SA_Key_File" "sha256 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:digest" | _url_replace)
   _debug2 _signature "$_signature"
-
-  rm -rf "$YC_SA_Key_File"
 
   _jwt=$(printf "{\"jwt\": \"%s.%s.%s\"}" "$header" "$payload" "$_signature")
   _debug2 _jwt "$_jwt"
 
   export _H1="Content-Type: application/json"
-  _iam_response="$(_post "$_jwt" "https://iam.api.cloud.yandex.net/iam/v1/tokens" "" "POST")"
-  _debug3 _iam_response "$(echo "$_iam_response" | _normalizeJson)"
+  _iam_response="$(_post "$_jwt" "$YC_IAM_Api" "" "POST")"
+  _debug2 _iam_response "$(echo "$_iam_response" | _normalizeJson)"
 
-  YC_Token="$(echo "$_iam_response" | _normalizeJson | _egrep_o "\"iamToken\"[^,]*" | _egrep_o "[^:]*$" | tr -d '"')"
-  _debug3 YC_Token
+  YC_Token=$(echo "$_iam_response" | _normalizeJson | sed -n "s/.*\"iamToken\":\"\([^\"]*\)\".*/\1/p")
+  _debug2 YC_Token "$YC_Token"
 
   return 0
 }
