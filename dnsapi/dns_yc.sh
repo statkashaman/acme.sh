@@ -288,4 +288,3 @@ _yc_login() {
 
   return 0
 }
-
